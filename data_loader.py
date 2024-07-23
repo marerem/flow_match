@@ -15,6 +15,9 @@ def min_max_scale(tensor):
 def rescale_angles(angles):
     rescaled_angles = [(x + 45) / 90 for x in angles]
     return rescaled_angles
+def backward_rescale_angles(rescaled_angles):
+    original_angles = [x * 90 - 45 for x in rescaled_angles]
+    return original_angles
 class AugmentationDataLoader(Dataset):
     def __init__(self, target_sequences, moving_sequences, translation_range=45):
         """
@@ -92,3 +95,35 @@ class AugmentationDataLoader(Dataset):
         combined_augmented_seq = torch.stack([augmented_target_seq, augmented_moving_seq], dim=0)
 
         return combined_augmented_seq, theta, dx, dy
+    
+class BackTransformation:
+    def __init__(self):
+        pass
+
+    def inverse_rotate(self, frame, angle):
+        return FA.rotate(frame.unsqueeze(0), -angle).squeeze(0)
+
+    def inverse_translate(self, frame, dx, dy):
+        return FA.affine(frame.unsqueeze(0), angle=0, translate=(-dx, -dy), scale=1, shear=0).squeeze(0)
+
+    def apply_back_transform(self, combined_augmented_seq, theta, dx, dy):
+        # Extract augmented_moving_seq part
+        combined_augmented_seq = combined_augmented_seq.detach().numpy().copy()
+        augmented_moving_seq = combined_augmented_seq[1]  # Assuming combined_augmented_seq has shape [2, D, H, W]
+
+        theta = backward_rescale_angles(theta)
+        dx = backward_rescale_angles(dx)
+        dy = backward_rescale_angles(dy)
+        
+        transformed_frames = []
+        for frame, angle, translation_x, translation_y in zip(augmented_moving_seq, theta, dx, dy):
+            frame = self.inverse_translate(frame, translation_x, translation_y)
+            frame = self.inverse_rotate(frame, angle)
+            transformed_frames.append(frame)
+        
+        transformed_frames = torch.stack(transformed_frames)
+
+        # Replace the augmented_moving_seq part in combined_augmented_seq with transformed_frames
+        combined_augmented_seq[1] = transformed_frames
+        
+        return combined_augmented_seq
